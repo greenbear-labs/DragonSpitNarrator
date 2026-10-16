@@ -2,7 +2,22 @@
 
 Natural-sounding narration clips from local, open-source voice models, served from a Mac mini to a web UI at a greenbearlabs.com subdomain and to Claude through an API.
 
-This repository currently holds **phase 1: the engine**, an HTTP API that runs on the Mac mini and routes each request to the right model. The web UI, Cloudflare Tunnel and Claude connector come next.
+The repository has two parts:
+
+- `engine/` and `workers/`: the voice engine, an HTTP API that runs on the Mac mini and routes each request to the right model.
+- `web/`: the web page (Vite + React), deployed by Vercel from `main`. It talks to the engine straight from the browser.
+
+Reaching the engine from other computers (Cloudflare Tunnel) and the Claude connector come next.
+
+## Web page
+
+Vercel builds `web/` using the settings in `vercel.json`. On first visit, open **Engine settings** and paste the token from `uv run narrator-engine token`; the browser remembers it. Until the tunnel exists, the page works in Chrome on the Mac mini itself, because the engine only listens on `127.0.0.1`. Chrome asks once to allow local network access.
+
+```bash
+cd web
+npm install
+npm run dev      # http://localhost:5173, talks to the engine at 127.0.0.1:8765
+```
 
 ## Engines and voices
 
@@ -76,6 +91,7 @@ Without `"wait": true`, `POST /v1/clips` returns at once with `status: "queued"`
 | `NARRATOR_HOST` / `NARRATOR_PORT` | `127.0.0.1` / `8765` | Bind address |
 | `NARRATOR_TOKEN` | generated | Override the API token |
 | `NARRATOR_CORS_ORIGINS` | `https://narrator.greenbearlabs.com,http://localhost:5173` | Browser origins allowed to call the API |
+| `NARRATOR_CORS_ORIGIN_REGEX` | `https://dragonspitnarrator[a-z0-9-]*\.vercel\.app` | Also allowed: the Vercel deployments of the web page |
 | `NARRATOR_DEVICE` | `auto` | `mps`, `cpu` or `cuda`; Kokoro uses CPU unless set |
 
 Worker logs are in `~/.dragonspit-narrator/logs/<engine>.log`.
