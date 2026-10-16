@@ -6,6 +6,8 @@ requires-python = ">=3.10,<3.13"
 dependencies = [
     "chatterbox-tts>=0.1.7",
     "soundfile>=0.12",
+    # resemble-perth (Chatterbox's watermarker) imports pkg_resources, which setuptools 81+ removed.
+    "setuptools<81",
 ]
 
 [tool.uv]
