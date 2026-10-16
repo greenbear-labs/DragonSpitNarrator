@@ -1,0 +1,13 @@
+[project]
+name = "narrator-worker-qwen3"
+version = "0.1.0"
+description = "Qwen3-TTS CustomVoice worker for the Dragon Spit Narrator engine"
+requires-python = ">=3.10,<3.13"
+dependencies = [
+    "qwen-tts>=0.1.1",
+    "torch",
+    "soundfile>=0.12",
+]
+
+[tool.uv]
+package = false

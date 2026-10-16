@@ -1,0 +1,13 @@
+[project]
+name = "narrator-worker-kokoro"
+version = "0.1.0"
+description = "Kokoro-82M worker for the Dragon Spit Narrator engine"
+requires-python = ">=3.10,<3.13"
+dependencies = [
+    "kokoro>=0.9.4",
+    "soundfile>=0.12",
+    "numpy",
+]
+
+[tool.uv]
+package = false
