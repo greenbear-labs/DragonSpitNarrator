@@ -56,9 +56,13 @@ def create_app(settings: Settings) -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
+        allow_origin_regex=settings.cors_origin_regex,
         allow_methods=["*"],
         allow_headers=["*"],
+        # Chrome asks a localhost server to opt in before a public website may call it.
+        allow_private_network=True,
     )
+
     app.state.settings, app.state.pool, app.state.catalog, app.state.store = settings, pool, catalog, store
 
     def require_token(request: Request) -> None:

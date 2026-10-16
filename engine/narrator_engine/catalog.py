@@ -23,6 +23,8 @@ class Voice:
     supports_emotion: bool = False
     source: str = "preset"  # "preset" or "custom"
     featured: bool = False
+    # Alex's chosen defaults, shown first in the web UI.
+    recommended: bool = False
     # Engine-specific parameters passed to the worker (Kokoro voice name, Qwen speaker, reference clip).
     engine_args: dict = field(default_factory=dict)
     created_at: str | None = None
@@ -31,6 +33,9 @@ class Voice:
         data = asdict(self)
         data.pop("engine_args")
         return data
+
+
+RECOMMENDED_KOKORO = {"af_heart"}
 
 
 def _kokoro(voice: str, name: str, gender: str, accent: str, grade: str, description: str) -> Voice:
@@ -43,6 +48,7 @@ def _kokoro(voice: str, name: str, gender: str, accent: str, grade: str, descrip
         accent=accent,
         grade=grade,
         featured=grade in {"A", "A-", "B-"},
+        recommended=voice in RECOMMENDED_KOKORO,
         engine_args={"voice": voice, "lang_code": "a" if accent == "American" else "b"},
     )
 
@@ -96,11 +102,13 @@ QWEN_PRESETS = [
 CHATTERBOX_PRESETS = [
     Voice(
         id="chatterbox:default",
-        name="Chatterbox default",
+        name="Chatterbox",
         engine="chatterbox",
-        description="Chatterbox's built-in voice, with full emotion control",
+        description="Chatterbox's built-in male voice, with full emotion control",
+        gender="male",
         supports_emotion=True,
         featured=True,
+        recommended=True,
         engine_args={},
     )
 ]
@@ -129,7 +137,9 @@ class VoiceCatalog:
         return voices
 
     def list(self) -> list[Voice]:
-        return [v for v in PRESETS + self._custom_voices() if v.engine in self.engines]
+        voices = [v for v in PRESETS + self._custom_voices() if v.engine in self.engines]
+        # Recommended first, then custom, then everything else; stable within each group.
+        return sorted(voices, key=lambda v: (not v.recommended, v.source != "custom"))
 
     def get(self, voice_id: str) -> Voice:
         for voice in self.list():

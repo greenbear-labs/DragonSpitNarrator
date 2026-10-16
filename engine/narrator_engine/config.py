@@ -15,6 +15,8 @@ DEFAULT_ORIGINS = [
     "https://narrator.greenbearlabs.com",
     "http://localhost:5173",
 ]
+# Vercel production and preview deployments of the web UI.
+DEFAULT_ORIGIN_REGEX = r"https://dragonspitnarrator[a-z0-9-]*\.vercel\.app"
 ALL_ENGINES = ["kokoro", "chatterbox", "qwen3"]
 
 
@@ -30,6 +32,7 @@ class Settings:
     host: str = "127.0.0.1"
     port: int = 8765
     cors_origins: list[str] = field(default_factory=lambda: list(DEFAULT_ORIGINS))
+    cors_origin_regex: str | None = DEFAULT_ORIGIN_REGEX
     engines: list[str] = field(default_factory=lambda: list(ALL_ENGINES))
     worker_commands: dict[str, list[str]] = field(default_factory=dict)
     device: str = "auto"
@@ -89,6 +92,7 @@ def load_settings() -> Settings:
         host=env.get("NARRATOR_HOST", "127.0.0.1"),
         port=int(env.get("NARRATOR_PORT", "8765")),
         cors_origins=[o.strip() for o in origins.split(",")] if origins else list(DEFAULT_ORIGINS),
+        cors_origin_regex=env.get("NARRATOR_CORS_ORIGIN_REGEX", DEFAULT_ORIGIN_REGEX) or None,
         engines=engines,
         worker_commands=worker_commands,
         device=env.get("NARRATOR_DEVICE", "auto"),

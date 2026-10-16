@@ -128,3 +128,31 @@ def test_delete_clip(client, settings):
     assert client.delete(f"/v1/clips/{clip['id']}").status_code == 204
     assert not (settings.clips_dir / f"{clip['id']}.wav").exists()
     assert client.get(f"/v1/clips/{clip['id']}").status_code == 404
+
+
+def test_recommended_voices_come_first(client):
+    voices = client.get("/v1/voices").json()["voices"]
+    assert [v["id"] for v in voices[:2]] == ["kokoro:af_heart", "chatterbox:default"]
+    assert all(v["recommended"] for v in voices[:2]) and not voices[2]["recommended"]
+
+
+def test_vercel_site_can_call_engine_from_browser(client):
+    origin = "https://dragonspitnarrator-git-main-greenbear-labs-projects.vercel.app"
+    preflight = client.options(
+        "/v1/voices",
+        headers={
+            "Origin": origin,
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "authorization",
+            "Access-Control-Request-Private-Network": "true",
+        },
+    )
+    assert preflight.status_code == 200
+    assert preflight.headers["access-control-allow-origin"] == origin
+    assert preflight.headers["access-control-allow-private-network"] == "true"
+
+    evil = client.options(
+        "/v1/voices",
+        headers={"Origin": "https://dragonspitnarrator.evil.com", "Access-Control-Request-Method": "GET"},
+    )
+    assert "access-control-allow-origin" not in evil.headers
