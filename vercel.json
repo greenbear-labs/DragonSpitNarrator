@@ -3,5 +3,6 @@
   "framework": null,
   "installCommand": "npm ci --prefix web",
   "buildCommand": "npm run build --prefix web",
-  "outputDirectory": "web/dist"
+  "outputDirectory": "web/dist",
+  "rewrites": [{ "source": "/api/:path*", "destination": "/api/relay?__path=:path*" }]
 }

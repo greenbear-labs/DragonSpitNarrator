@@ -1,75 +1,91 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Clip, Emotion, Engine, EngineError, Settings, Voice, loadSettings, saveSettings } from "./api";
+import { ApiError, Clip, DirectEngine, DirectSettings, Emotion, Relay, Status, Voice, loadDirect, saveDirect } from "./api";
 import { ClipList } from "./ClipList";
 import { CloneVoice } from "./CloneVoice";
 import { Composer } from "./Composer";
-import { SettingsPanel } from "./SettingsPanel";
-
-type Connection =
-  | { state: "connecting" }
-  | { state: "ok" }
-  | { state: "no-token" }
-  | { state: "bad-token" }
-  | { state: "offline"; message: string };
+import { KeyPanel } from "./KeyPanel";
+import { OFFLINE_VOICES, SampleManifest, loadSamples } from "./samples";
 
 const POLL_MS = 1500;
 
 export function App() {
-  const [settings, setSettings] = useState<Settings>(loadSettings);
-  const engine = useMemo(() => new Engine(settings.url, settings.token), [settings]);
-  const [connection, setConnection] = useState<Connection>({ state: "connecting" });
-  const [voices, setVoices] = useState<Voice[]>([]);
+  const [direct, setDirect] = useState<DirectSettings>(loadDirect);
+  const relay = useMemo(() => new Relay(), []);
+  const backend = useMemo(() => (direct.token ? new DirectEngine(direct.url, direct.token) : relay), [direct, relay]);
+  const [status, setStatus] = useState<Status | null>(null);
+  const [problem, setProblem] = useState<string | null>(null);
+  const [voices, setVoices] = useState<Voice[]>(OFFLINE_VOICES);
   const [emotions, setEmotions] = useState<Emotion[]>([]);
   const [clips, setClips] = useState<Clip[]>([]);
-  const [showSettings, setShowSettings] = useState(false);
+  const [samples, setSamples] = useState<SampleManifest>({ generated_at: null, voices: [] });
+  const [showKey, setShowKey] = useState(false);
   const [showClone, setShowClone] = useState(false);
 
+  useEffect(() => {
+    loadSamples().then(setSamples);
+  }, []);
+
+  const refreshStatus = useCallback(() => backend.status().then(setStatus).catch(() => {}), [backend]);
+
   const connect = useCallback(async () => {
-    setConnection({ state: "connecting" });
-    if (!engine.token) {
-      setConnection({ state: "no-token" });
-      setShowSettings(true);
-      return;
-    }
+    setProblem(null);
     try {
-      const [v, e, c] = await Promise.all([engine.voices(), engine.emotions(), engine.clips()]);
+      const s = await backend.status();
+      setStatus(s);
+      if (s.engine !== "online") return;
+      const [v, e, c] = await Promise.all([backend.voices(), backend.emotions(), backend.clips()]);
       setVoices(v);
       setEmotions(e);
       setClips(c);
-      setConnection({ state: "ok" });
     } catch (err) {
-      if (err instanceof EngineError && err.status === 401) {
-        setConnection({ state: "bad-token" });
-        setShowSettings(true);
-      } else {
-        setConnection({ state: "offline", message: err instanceof Error ? err.message : String(err) });
-      }
+      if (err instanceof ApiError && err.code === "bad-key") setShowKey(true);
+      setProblem(err instanceof Error ? err.message : String(err));
     }
-  }, [engine]);
+  }, [backend]);
 
   useEffect(() => {
     connect();
   }, [connect]);
 
-  // Poll clips that are still being generated.
-  const pending = clips.filter((c) => c.status === "queued" || c.status === "running").map((c) => c.id);
-  const pendingKey = pending.join(",");
+  // Poll clips that are still being generated, then refresh the allowance once they finish.
+  const pendingKey = clips
+    .filter((c) => c.status === "queued" || c.status === "running")
+    .map((c) => c.id)
+    .join(",");
   useEffect(() => {
     if (!pendingKey) return;
     const timer = setInterval(async () => {
-      const updates = await Promise.all(pendingKey.split(",").map((id) => engine.clip(id).catch(() => null)));
+      const updates = await Promise.all(pendingKey.split(",").map((id) => backend.clip(id).catch(() => null)));
       setClips((current) => current.map((c) => updates.find((u) => u?.id === c.id) ?? c));
     }, POLL_MS);
     return () => clearInterval(timer);
-  }, [pendingKey, engine]);
+  }, [pendingKey, backend]);
 
-  const updateSettings = (next: Settings) => {
-    saveSettings(next);
-    setSettings(next);
-    setShowSettings(false);
+  const changeDirect = (next: DirectSettings) => {
+    saveDirect(next);
+    setDirect(next);
+    setVoices(OFFLINE_VOICES);
+    setClips([]);
+    setShowKey(false);
+  };
+
+  const signIn = async (key: string) => {
+    await relay.signIn(key);
+    setShowKey(false);
+    await connect();
+  };
+
+  const signOut = async () => {
+    await relay.signOut();
+    setShowKey(false);
+    setVoices(OFFLINE_VOICES);
+    setClips([]);
+    await connect();
   };
 
   const voiceById = useMemo(() => new Map(voices.map((v) => [v.id, v])), [voices]);
+  const keyed = status?.access.tier === "key";
+  const resting = status?.engine === "resting";
 
   return (
     <div className="app">
@@ -78,40 +94,66 @@ export function App() {
           <img src="/favicon.svg" alt="" width={28} height={28} />
           <span>Dragon Spit Narrator</span>
         </div>
-        <div className="topbar-actions">
-          <ConnectionPill connection={connection} onRetry={connect} />
-          <button className="ghost" onClick={() => setShowSettings((s) => !s)}>
-            Engine settings
-          </button>
-        </div>
+        <button className="ghost" onClick={() => setShowKey(true)}>
+          {direct.token ? "Direct to engine" : keyed ? "Key in use" : "Have a key?"}
+        </button>
       </header>
 
-      {showSettings && (
-        <SettingsPanel settings={settings} connection={connection.state} onSave={updateSettings} onClose={() => setShowSettings(false)} />
+      <section className="hero">
+        <h1>Natural narration from open-source voices</h1>
+        <p>
+          Type a line, pick a voice, and a Mac mini at Green Bear Labs turns it into speech with open-source models (Kokoro,
+          Chatterbox and Qwen3-TTS). Nothing goes to a paid voice service.
+        </p>
+        <StatusLine status={status} problem={problem} onRetry={connect} />
+      </section>
+
+      {resting && (
+        <section className="notice">
+          <strong>The narrator is resting.</strong> The Mac mini that does the talking is offline right now.
+          {samples.voices.length > 0 ? " Press ▶ on any voice to hear a clip it made earlier." : " Check back a little later."}
+        </section>
       )}
 
-      {connection.state === "offline" && <OfflineHelp url={settings.url} onRetry={connect} />}
-
-      <main className="layout">
+      <main className="stack-lg">
         <Composer
-          engine={engine}
+          backend={backend}
+          status={status}
           voices={voices}
           emotions={emotions}
-          disabled={connection.state !== "ok"}
-          onCreated={(clip) => setClips((c) => [clip, ...c])}
+          samples={samples}
+          onCreated={(clip) => {
+            setClips((c) => [clip, ...c]);
+            refreshStatus();
+          }}
           onCloneVoice={() => setShowClone(true)}
+          onNeedKey={() => setShowKey(true)}
         />
         <ClipList
-          engine={engine}
+          backend={backend}
+          title={status?.features.library ? "Clips" : "Your clips"}
+          canDelete={status?.features.library ?? false}
           clips={clips}
           voiceById={voiceById}
           onDeleted={(id) => setClips((c) => c.filter((x) => x.id !== id))}
         />
       </main>
 
+      <footer className="footer">
+        <p>
+          Built by Alex at Green Bear Labs.
+          {status?.quota && ` Everyone gets ${status.quota.limit.toLocaleString()} free characters a day.`} Your clips stay on
+          the Mac mini and only you can see them.
+        </p>
+      </footer>
+
+      {showKey && (
+        <KeyPanel status={status} direct={direct} onSignIn={signIn} onSignOut={signOut} onDirect={changeDirect} onClose={() => setShowKey(false)} />
+      )}
+
       {showClone && (
         <CloneVoice
-          engine={engine}
+          backend={backend}
           onClose={() => setShowClone(false)}
           onAdded={(voice) => {
             setVoices((v) => [voice, ...v]);
@@ -123,35 +165,31 @@ export function App() {
   );
 }
 
-function ConnectionPill({ connection, onRetry }: { connection: Connection; onRetry: () => void }) {
-  const label = {
-    connecting: "Connecting…",
-    ok: "Engine connected",
-    "no-token": "Add your engine token",
-    "bad-token": "Token not accepted",
-    offline: "Engine offline",
-  }[connection.state];
+function StatusLine({ status, problem, onRetry }: { status: Status | null; problem: string | null; onRetry: () => void }) {
+  if (problem) {
+    return (
+      <button className="pill pill-offline" onClick={onRetry}>
+        <span className="dot" />
+        {problem}. Try again
+      </button>
+    );
+  }
+  if (!status) {
+    return (
+      <span className="pill pill-connecting">
+        <span className="dot" />
+        Waking the narrator…
+      </span>
+    );
+  }
+  const online = status.engine === "online";
+  let label = online ? "Narrator online" : "Narrator resting";
+  if (online && status.access.tier === "key") label += ` · unlimited (${status.access.name})`;
+  else if (online && status.quota) label += ` · ${status.quota.remaining.toLocaleString()} free characters left today`;
   return (
-    <button className={`pill pill-${connection.state}`} onClick={onRetry} title="Reconnect">
+    <button className={`pill ${online ? "pill-ok" : "pill-offline"}`} onClick={onRetry} title="Check again">
       <span className="dot" />
       {label}
     </button>
-  );
-}
-
-function OfflineHelp({ url, onRetry }: { url: string; onRetry: () => void }) {
-  return (
-    <section className="notice">
-      <strong>This page can't reach the voice engine at {url}.</strong>
-      <ul>
-        <li>The engine runs on the Mac mini, so it has to be switched on and running.</li>
-        <li>
-          For now, open this page <em>on the Mac mini</em> in Chrome. If Chrome asks to let the site access devices on your
-          local network, choose Allow.
-        </li>
-        <li>Using it from other computers comes with the next update.</li>
-      </ul>
-      <button onClick={onRetry}>Try again</button>
-    </section>
   );
 }

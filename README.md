@@ -1,23 +1,75 @@
 # Dragon Spit Narrator
 
-Natural-sounding narration clips from local, open-source voice models, served from a Mac mini to a web UI at a greenbearlabs.com subdomain and to Claude through an API.
+Natural-sounding narration clips from local, open-source voice models, served from a Mac mini to a public web page and to Claude through an API.
 
-The repository has two parts:
+The repository has three parts:
 
 - `engine/` and `workers/`: the voice engine, an HTTP API that runs on the Mac mini and routes each request to the right model.
-- `web/`: the web page (Vite + React), deployed by Vercel from `main`. It talks to the engine straight from the browser.
+- `web/`: the web page (Vite + React), deployed by Vercel from `main`.
+- `api/`: the relay, a Vercel function the web page talks to. It is the only thing that talks to the engine.
 
-Reaching the engine from other computers (Cloudflare Tunnel) and the Claude connector come next.
+## The public website
 
-## Web page
+Anyone can use the site without signing in, within a small daily allowance. A personal key removes the limit.
 
-Vercel builds `web/` using the settings in `vercel.json`. On first visit, open **Engine settings** and paste the token from `uv run narrator-engine token`; the browser remembers it. Until the tunnel exists, the page works in Chrome on the Mac mini itself, because the engine only listens on `127.0.0.1`. Chrome asks once to allow local network access.
+| | Free visitor | With a key |
+| --- | --- | --- |
+| Characters a day | 1,000 (`FREE_DAILY_CHARS`), counted by IP address and a browser cookie | Unlimited |
+| Voices | The seven featured preset voices | Every voice, including cloned ones |
+| Emotion, intensity, speed | Yes | Yes |
+| Voice cloning, WAV, tags, deleting | No | Yes |
+| Clips they can see | Only their own | All clips |
+
+All free visitors together are capped at 20,000 characters a day (`FREE_GLOBAL_DAILY_CHARS`), and each visitor waits for one clip to finish before starting the next, so a burst of visitors can't tie up the Mac. When the Mac is off or asleep, the site switches to "resting" mode: Generate is disabled and the voice cards play the samples saved in `web/public/samples`.
+
+Browsers never see the engine or its token. The relay (`api/_lib/relay.ts`) holds the token, checks the allowance or key, and forwards the request to the engine through the tunnel.
+
+### Setting it up
+
+1. **Make the engine reachable from the internet** with a tunnel; the engine itself keeps listening only on `127.0.0.1`. With [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) on a domain in your Cloudflare account:
+
+   ```bash
+   brew install cloudflared
+   cloudflared tunnel login
+   cloudflared tunnel create narrator
+   cloudflared tunnel route dns narrator engine.greenbearlabs.com
+   cloudflared tunnel run --url http://127.0.0.1:8765 narrator
+   ```
+
+   To keep it running after a restart, install it as a service (`cloudflared service install`, see Cloudflare's guide). Without a domain on Cloudflare, `tailscale funnel 8765` gives a fixed `https://<mac>.<tailnet>.ts.net` address instead.
+
+2. **Add a Redis store** so the daily allowance survives between requests: in the Vercel project, Storage → Marketplace → Upstash Redis (the free plan is plenty). It sets `KV_REST_API_URL` and `KV_REST_API_TOKEN` for you. Without it, counts only last as long as one function instance.
+
+3. **Set the environment variables** in Vercel (Settings → Environment Variables), then redeploy:
+
+   | Variable | Value |
+   | --- | --- |
+   | `ENGINE_URL` | The tunnel address, e.g. `https://engine.greenbearlabs.com` |
+   | `ENGINE_TOKEN` | The output of `uv run narrator-engine token` on the Mac mini. It also works as the owner's key on the site. |
+   | `NARRATOR_KEYS` | Personal keys as `name:key`, separated by commas, e.g. `sam:Xk2…,jo:9fQ…`. Remove one and redeploy to switch it off. Keys shorter than 16 characters are ignored. |
+   | `FREE_DAILY_CHARS` | Optional, default `1000` |
+   | `FREE_GLOBAL_DAILY_CHARS` | Optional, default `20000` |
+
+   Make a key with `python3 -c "import secrets; print(secrets.token_urlsafe(24))"`.
+
+4. **Save voice samples** for resting mode: with the engine running, `python3 scripts/make-samples.py` on the Mac mini, then commit and push `web/public/samples`.
+
+Scripts and Claude can use the relay too: send `Authorization: Bearer <key>` to `https://<site>/api/...`. The routes mirror the engine's (`/api/voices`, `/api/clips`, `/api/clips/{id}/audio`, ...), plus `/api/status`.
+
+### On the Mac mini without the tunnel
+
+Open **Have a key? → Connect straight to the engine**, and paste the engine token. The page then skips the relay and talks to `http://127.0.0.1:8765` from the browser (Chrome asks once to allow local network access). Leave the token empty to go back to the normal site.
+
+### Local development
 
 ```bash
 cd web
 npm install
-npm run dev      # http://localhost:5173, talks to the engine at 127.0.0.1:8765
+npm run dev      # http://localhost:5173; /api runs the same relay, pointed at the engine on 127.0.0.1:8765
+npm test         # relay tests against a stand-in engine
 ```
+
+Put `ENGINE_TOKEN=...` (and optionally `NARRATOR_KEYS`) in `web/.env.local` so the dev relay can reach your local engine.
 
 ## Engines and voices
 

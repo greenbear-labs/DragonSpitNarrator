@@ -1,13 +1,46 @@
 import { FormEvent, useState } from "react";
-import { Engine, Voice } from "./api";
+import { Backend, Voice } from "./api";
 
 type Props = {
-  engine: Engine;
+  backend: Backend;
   onClose: () => void;
   onAdded: (voice: Voice) => void;
 };
 
-export function CloneVoice({ engine, onClose, onAdded }: Props) {
+// Uploads through the website are capped at about 4.5 MB, so recordings are shrunk to 24 kHz mono WAV
+// (about 1.4 MB for 30 seconds) in the browser first. Chatterbox works at that rate anyway.
+const RATE = 24_000;
+const MAX_SECONDS = 40;
+
+async function compactWav(file: File): Promise<Blob> {
+  const decoded = await new AudioContext().decodeAudioData(await file.arrayBuffer());
+  const seconds = Math.min(decoded.duration, MAX_SECONDS);
+  const offline = new OfflineAudioContext(1, Math.ceil(seconds * RATE), RATE);
+  const source = offline.createBufferSource();
+  source.buffer = decoded;
+  source.connect(offline.destination);
+  source.start();
+  const samples = (await offline.startRendering()).getChannelData(0);
+
+  const view = new DataView(new ArrayBuffer(44 + samples.length * 2));
+  const text = (offset: number, s: string) => [...s].forEach((ch, i) => view.setUint8(offset + i, ch.charCodeAt(0)));
+  text(0, "RIFF");
+  view.setUint32(4, 36 + samples.length * 2, true);
+  text(8, "WAVEfmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, RATE, true);
+  view.setUint32(28, RATE * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  text(36, "data");
+  view.setUint32(40, samples.length * 2, true);
+  samples.forEach((s, i) => view.setInt16(44 + i * 2, Math.max(-1, Math.min(1, s)) * 0x7fff, true));
+  return new Blob([view], { type: "audio/wav" });
+}
+
+export function CloneVoice({ backend, onClose, onAdded }: Props) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [transcript, setTranscript] = useState("");
@@ -24,11 +57,18 @@ export function CloneVoice({ engine, onClose, onAdded }: Props) {
     form.set("description", description);
     form.set("transcript", transcript);
     form.set("consent", String(consent));
-    form.set("reference", file);
     setBusy(true);
     setError(null);
     try {
-      onAdded(await engine.addVoice(form));
+      if (backend.mode === "relay") {
+        const wav = await compactWav(file).catch(() => {
+          throw new Error("Couldn't read that recording. Try a WAV or MP3 file.");
+        });
+        form.set("reference", wav, "reference.wav");
+      } else {
+        form.set("reference", file);
+      }
+      onAdded(await backend.addVoice(form));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {

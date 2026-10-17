@@ -1,8 +1,10 @@
 import { useState } from "react";
-import { Clip, Engine, Voice } from "./api";
+import { Backend, Clip, Voice } from "./api";
 
 type Props = {
-  engine: Engine;
+  backend: Backend;
+  title: string;
+  canDelete: boolean;
   clips: Clip[];
   voiceById: Map<string, Voice>;
   onDeleted: (id: string) => void;
@@ -13,23 +15,26 @@ function when(iso: string) {
   return date.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
-export function ClipList({ engine, clips, voiceById, onDeleted }: Props) {
+export function ClipList({ backend, title, canDelete, clips, voiceById, onDeleted }: Props) {
   const [filter, setFilter] = useState("");
   const shown = filter
     ? clips.filter((c) => c.tags.includes(filter) || c.text.toLowerCase().includes(filter.toLowerCase()))
     : clips;
-  const allTags = [...new Set(clips.flatMap((c) => c.tags))].sort();
+  const allTags = [...new Set(clips.flatMap((c) => c.tags))].filter((t) => !t.startsWith("visitor-")).sort();
 
   const remove = async (clip: Clip) => {
+    if (!canDelete) return onDeleted(clip.id);
     if (!confirm("Delete this clip? This can't be undone.")) return;
-    await engine.deleteClip(clip.id);
+    await backend.deleteClip(clip.id);
     onDeleted(clip.id);
   };
+
+  if (clips.length === 0) return null;
 
   return (
     <section className="card library">
       <div className="row library-head">
-        <h2>Clips</h2>
+        <h2>{title}</h2>
         <input
           className="search"
           list="tag-list"
@@ -44,7 +49,7 @@ export function ClipList({ engine, clips, voiceById, onDeleted }: Props) {
         </datalist>
       </div>
 
-      {shown.length === 0 && <p className="empty">No clips yet. Write something on the left and press Generate.</p>}
+      {shown.length === 0 && <p className="empty">No clips match that search.</p>}
 
       <ul className="clips">
         {shown.map((clip) => {
@@ -56,7 +61,7 @@ export function ClipList({ engine, clips, voiceById, onDeleted }: Props) {
                 <span>{clip.emotion}</span>
                 {clip.duration_s != null && <span>{clip.duration_s.toFixed(1)} s</span>}
                 <span>{when(clip.created_at)}</span>
-                {clip.tags.map((t) => (
+                {clip.tags.filter((t) => !t.startsWith("visitor-")).map((t) => (
                   <button key={t} className="tag" onClick={() => setFilter(t)}>
                     {t}
                   </button>
@@ -66,18 +71,20 @@ export function ClipList({ engine, clips, voiceById, onDeleted }: Props) {
 
               {clip.status === "done" && (
                 <div className="row clip-actions">
-                  <audio controls preload="none" src={engine.audioUrl(clip)} />
-                  <a className="button ghost" href={engine.audioUrl(clip)} download>
+                  <audio controls preload="none" src={backend.audioUrl(clip)} />
+                  <a className="button ghost" href={backend.audioUrl(clip)} download>
                     Download {clip.format.toUpperCase()}
                   </a>
-                  {clip.format === "mp3" && (
-                    <a className="button ghost" href={engine.audioUrl(clip, "wav")} download>
+                  {clip.format === "mp3" && canDelete && (
+                    <a className="button ghost" href={backend.audioUrl(clip, "wav")} download>
                       WAV
                     </a>
                   )}
-                  <button className="ghost danger" onClick={() => remove(clip)}>
-                    Delete
-                  </button>
+                  {canDelete && (
+                    <button className="ghost danger" onClick={() => remove(clip)}>
+                      Delete
+                    </button>
+                  )}
                 </div>
               )}
               {(clip.status === "queued" || clip.status === "running") && (

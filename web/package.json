@@ -6,16 +6,19 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "esbuild tests/relay.test.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/tests/relay.test.mjs --log-level=warning && node node_modules/.cache/tests/relay.test.mjs"
   },
   "dependencies": {
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },
   "devDependencies": {
+    "@types/node": "^22.20.5",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "@vitejs/plugin-react": "^5.1.0",
+    "esbuild": "^0.28.2",
     "typescript": "^5.9.3",
     "vite": "^7.3.0"
   }
